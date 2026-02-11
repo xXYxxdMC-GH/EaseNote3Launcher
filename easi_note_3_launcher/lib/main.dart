@@ -296,6 +296,9 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   Future<void> injectSelf(String path) async {
+    status = "正在注入...";
+    setState(() {});
+    await Future.delayed(const Duration(milliseconds: 250));
     final app = File("EasiNote3Launcher.exe");
     final flutterDll = File("flutter_windows.dll");
     final screenDll = File("screen_retriever_windows_plugin.dll");
@@ -303,11 +306,23 @@ class _SplashScreenState extends State<SplashScreen>
     final dataDirectory = Directory("data");
     final targetDataDir = Directory("$path/data");
 
+    status = "正在注入主程序...";
+    setState(() {});
+    await Future.delayed(const Duration(milliseconds: 250));
     await app.copy(r"$path\EasiNote3Launcher.exe");
+    status = "正在注入DLL...";
+    setState(() {});
+    await Future.delayed(const Duration(milliseconds: 250));
     await flutterDll.copy(r"$path\flutter_windows.dll");
     await screenDll.copy(r"$path\screen_retriever_windows_plugin.dll");
     await windowManagerDll.copy(r"$path\window_manager_plugin.dll");
+    status = "正在注入数据...";
+    setState(() {});
+    await Future.delayed(const Duration(milliseconds: 250));
     await copyDirectory(dataDirectory, targetDataDir);
+    status = "注入完成";
+    setState(() {});
+    await Future.delayed(const Duration(milliseconds: 250));
   }
 
   Future<void> copyDirectory(Directory source, Directory destination) async {
@@ -422,7 +437,6 @@ class _SplashScreenState extends State<SplashScreen>
                         )
                       ],
                     ),
-
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       mainAxisSize: MainAxisSize.max,
@@ -735,161 +749,188 @@ class _SplashScreenState extends State<SplashScreen>
                 ),),
               )
             ],
-          ) : Stack(
-            children: [
-              Scaffold(
-                backgroundColor: Colors.transparent,
-                appBar: AppBar(
-                  backgroundColor: Colors.transparent,
-                  actions: [
-                    IconButton(onPressed: () {
-                      allExit(0);
-                    }, icon: Icon(
-                      Icons.close,
-                      color: Colors.white,
-                    )),
-                    const SizedBox(width: 8,)
-                  ],
-                ),
-              ),
-              Align(
-                alignment: Alignment.bottomLeft,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          ) : FutureBuilder<bool?>(
+            future: isRunAsAdmin(),
+            builder: (context, snapshot,) {
+              final data = !(snapshot.data ?? false);
+              return IgnorePointer(
+                ignoring: data,
+                child: Stack(
                   children: [
-                    Padding(padding: const EdgeInsets.only(left: 32), child: Text("EN3 Launcher 安装器",
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 48,
-                      ),
-                    ),),
-                    const SizedBox(height: 48,),
-                    Padding(padding: const EdgeInsets.only(left: 32), child: Text("希沃白板3路径:",
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
+                    if (data) Center(
+                      child: Text("请以管理员权限重启程序以注入",
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 44,
+                        ),
                       ),
                     ),
-                    ),
-                    const SizedBox(height: 8,),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 32),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Container(
-                              height: 32,
-                              decoration: BoxDecoration(
-                                color: Colors.black,
-                                border: Border.all(color: Colors.white, width: 1.5),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 8),
-                                child: Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: FutureBuilder<String?>(
-                                    future: findEasiNote(),
-                                    builder: (context, snapshot) {
-                                      final path = snapshot.data;
-                                      return Text(
-                                        path ?? "未找到",
-                                        style: const TextStyle(color: Colors.white, fontSize: 18),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      );
-                                    },
-                                  ),
-                                ),
+                    ImageFiltered(
+                      imageFilter: ImageFilter.blur(sigmaX: data ? 10 : 0, sigmaY: data ? 10 : 0),
+                      child: Stack(
+                          children: [
+                            Scaffold(
+                              backgroundColor: Colors.transparent,
+                              appBar: AppBar(
+                                backgroundColor: Colors.transparent,
+                                actions: [
+                                  IconButton(onPressed: () {
+                                    allExit(0);
+                                  }, icon: Icon(
+                                    Icons.close,
+                                    color: Colors.white,
+                                  )),
+                                  const SizedBox(width: 8,)
+                                ],
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          FilledButton(
-                            style: ButtonStyle(
-                              foregroundColor: WidgetStateProperty.all(Colors.white),
-                              backgroundColor: WidgetStateProperty.all(Colors.black),
-                              side: WidgetStateProperty.all(
-                                const BorderSide(color: Colors.white, width: 1.5),
-                              ),
-                              shape: WidgetStateProperty.all(
-                                RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                            Align(
+                              alignment: Alignment.bottomLeft,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Padding(padding: const EdgeInsets.only(left: 32), child:
+                                  Text("EN3 Launcher 安装器",
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 48,
+                                    ),
+                                  ),
+                                  ),
+                                  const SizedBox(height: 48,),
+                                  Padding(padding: const EdgeInsets.only(left: 32), child:
+                                  Text("希沃白板3路径:",
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 24,
+                                    ),
+                                  ),
+                                  ),
+                                  const SizedBox(height: 8,),
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 32),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Container(
+                                            height: 32,
+                                            decoration: BoxDecoration(
+                                              color: Colors.black,
+                                              border: Border.all(color: Colors.white, width: 1.5),
+                                              borderRadius: BorderRadius.circular(4),
+                                            ),
+                                            child: Padding(
+                                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                                              child: Align(
+                                                alignment: Alignment.centerLeft,
+                                                child: FutureBuilder<String?>(
+                                                  future: findEasiNote(),
+                                                  builder: (context, snapshot) {
+                                                    final path = snapshot.data;
+                                                    return Text(
+                                                      path ?? "未找到",
+                                                      style: const TextStyle(color: Colors.white, fontSize: 18),
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow.ellipsis,
+                                                    );
+                                                  },
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        FilledButton(
+                                          style: ButtonStyle(
+                                            foregroundColor: WidgetStateProperty.all(Colors.white),
+                                            backgroundColor: WidgetStateProperty.all(Colors.black),
+                                            side: WidgetStateProperty.all(
+                                              const BorderSide(color: Colors.white, width: 1.5),
+                                            ),
+                                            shape: WidgetStateProperty.all(
+                                              RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                                            ),
+                                          ),
+                                          onPressed: () async {
+                                            final path = await FilePickerWindows().getDirectoryPath();
+                                            setState(() {
+                                              rawPath = path;
+                                            });
+                                          },
+                                          child: const Text("浏览..."),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 96),
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                                    child: Row(
+                                      children: [
+                                        const SizedBox(width: 20),
+                                        Expanded(
+                                          child: Text(
+                                            "状态: $status",
+                                            style: const TextStyle(color: Colors.white, fontSize: 24),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                        FutureBuilder(future: findEasiNote(), builder: (_, snapshot) {
+                                          return FilledButton(
+                                              style: ButtonStyle(
+                                                foregroundColor: WidgetStateProperty.all(isLoading ? Colors.white30 : Colors.white),
+                                                backgroundColor: WidgetStateProperty.all(Colors.black),
+                                                side: WidgetStateProperty.all(
+                                                  BorderSide(color: isLoading ? Colors.white30 : Colors.white, width: 1.5),
+                                                ),
+                                                shape: WidgetStateProperty.all(
+                                                  RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                                                ),
+                                              ),
+                                              onPressed: isLoading ? null : () async {
+                                                setState(() {
+                                                  isLoading = true;
+                                                });
+                                                if (snapshot.data == null) {
+                                                  await downloadFile("https://down10.zol.com.cn/unify/xiazai/53/528184_20230516003806.exe?dname=EasiNoteSetup_3.1.2.3606.exe");
+                                                } else {
+                                                  await injectSelf(snapshot.data!);
+                                                }
+                                                setState(() {
+                                                  isLoading = false;
+                                                });
+                                              },
+                                              child: Row(
+                                                children: [
+                                                  Icon(snapshot.data == null ? Icons.download : Icons.play_arrow),
+                                                  const SizedBox(width: 8,),
+                                                  Text(snapshot.data == null ? "下载希沃3安装包" : "启动任务")
+                                                ],
+                                              )
+                                          );
+                                        })
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  LinearProgressIndicator(
+                                    value: progress / 100,
+                                    color: Colors.white,
+                                    backgroundColor: Colors.white30,
+                                  )
+                                ],
                               ),
                             ),
-                            onPressed: () async {
-                              final path = await FilePickerWindows().getDirectoryPath();
-                              setState(() {
-                                rawPath = path;
-                              });
-                            },
-                            child: const Text("浏览..."),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 96),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Row(
-                        children: [
-                          const SizedBox(width: 20),
-                          Expanded(
-                            child: Text(
-                              "状态: $status",
-                              style: const TextStyle(color: Colors.white, fontSize: 24),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          FutureBuilder(future: findEasiNote(), builder: (_, snapshot) {
-                            return FilledButton(
-                                style: ButtonStyle(
-                                  foregroundColor: WidgetStateProperty.all(isLoading ? Colors.white30 : Colors.white),
-                                  backgroundColor: WidgetStateProperty.all(Colors.black),
-                                  side: WidgetStateProperty.all(
-                                    BorderSide(color: isLoading ? Colors.white30 : Colors.white, width: 1.5),
-                                  ),
-                                  shape: WidgetStateProperty.all(
-                                    RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                                  ),
-                                ),
-                                onPressed: isLoading ? null : () async {
-                                  setState(() {
-                                    isLoading = true;
-                                  });
-                                  if (snapshot.data == null) {
-                                    await downloadFile("https://down10.zol.com.cn/unify/xiazai/53/528184_20230516003806.exe?dname=EasiNoteSetup_3.1.2.3606.exe");
-                                  } else {
-
-                                  }
-                                  setState(() {
-                                    isLoading = false;
-                                  });
-                                },
-                                child: Row(
-                                  children: [
-                                    Icon(snapshot.data == null ? Icons.download : Icons.play_arrow),
-                                    const SizedBox(width: 8,),
-                                    Text(snapshot.data == null ? "下载希沃3安装包" : "启动任务")
-                                  ],
-                                )
-                            );
-                          })
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    LinearProgressIndicator(
-                      value: progress / 100,
-                      color: Colors.white,
-                      backgroundColor: Colors.white30,
+                          ],
+                        ),
                     )
                   ],
-                ),
-              )
-            ],
-          ),
+                )
+              );
+            },
+          )
         )
       )
     );
@@ -921,6 +962,21 @@ void log(String message) {
 void allExit(int code) async {
   await file?.close();
   exit(code);
+}
+
+Future<void> runAsAdmin() async {
+  final exePath = Platform.resolvedExecutable;
+  await Process.run('powershell', [
+    'Start-Process',
+    exePath,
+    '-Verb',
+    'RunAs'
+  ]);
+}
+
+Future<bool> isRunAsAdmin() async {
+  final result = await Process.run('net', ['session']);
+  return result.exitCode == 0;
 }
 
 Future<void> clearLogFile() async {
