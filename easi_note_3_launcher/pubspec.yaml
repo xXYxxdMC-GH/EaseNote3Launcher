@@ -1,8 +1,8 @@
 name: easi_note_3_launcher
-description: "A new Flutter project."
+description: "A new Flutter project to launch EasiNote."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
-publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+publish_to: 'Github' # Remove this line if you wish to publish to pub.dev
 
 # The following defines the version and build number for your application.
 # A version number is three numbers separated by dots, like 1.2.43
@@ -34,10 +34,13 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
-  window_manager: any
-  path: any
-  crypto: any
-  shared_preferences: any
+  window_manager: ^0.5.1
+  path: ^1.9.1
+  path_provider: ^2.1.5
+  crypto: ^3.0.7
+  shared_preferences: ^2.5.4
+  dio: ^5.9.1
+  file_picker: any
 
 dev_dependencies:
   flutter_test:

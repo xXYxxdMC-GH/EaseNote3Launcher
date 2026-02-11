@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
+import 'dart:ui';
 import 'package:crypto/crypto.dart';
+import 'package:dio/dio.dart';
 import 'package:easi_note_3_launcher/setting.dart';
-import 'package:flutter/cupertino.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as path;
+import 'package:path_provider/path_provider.dart';
 import 'package:window_manager/window_manager.dart';
 
 final logFile = File('launcher_log.log');
@@ -20,6 +23,8 @@ bool settingMode = false;
 late bool noAnim;
 
 late bool fastBoot;
+
+late bool installMode;
 
 late RandomAccessFile? file;
 
@@ -43,6 +48,10 @@ void main(List<String> args) async {
     }
   }
 
+  if (!await File("EasiNote.exe").exists()) {
+    installMode = true;
+  }
+
   noAnim = await Settings.getNoAnimation();
 
   fastBoot = await Settings.getFastboot();
@@ -53,7 +62,7 @@ void main(List<String> args) async {
   await windowManager.ensureInitialized();
 
   WindowOptions options = WindowOptions(
-    size: Size(700, 310 + (settingMode ? 60 : 0)),
+    size: Size(700, 310 + ((settingMode && !isTampered) || installMode ? 60 : 0)),
     center: true,
     backgroundColor: Colors.transparent,
     skipTaskbar: true,
@@ -100,6 +109,7 @@ class _SplashScreenState extends State<SplashScreen>
   String logText = "";
   bool pressed = false;
   bool pressedFix = false;
+  bool isLoading = false;
   bool _exiting = false;
   ValueNotifier<int> clrCount = ValueNotifier<int>(0);
 
@@ -165,6 +175,157 @@ class _SplashScreenState extends State<SplashScreen>
     });
   }
 
+  double progress = 0.0;
+  String status = "未开始";
+
+  Future<void> downloadFile(String url) async {
+    final dio = Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 10),
+        receiveTimeout: const Duration(seconds: 30),
+      ),
+    );
+
+    final dir = await getApplicationCacheDirectory();
+    final savePath = "${dir.path}/EasiNote3.exe";
+
+    const maxRetries = 5;
+    int attempt = 0;
+
+    while (attempt < maxRetries) {
+      try {
+        int downloadedLength = 0;
+        final file = File(savePath);
+        if (await file.exists()) {
+          downloadedLength = await file.length();
+        }
+
+        final options = Options(
+          headers: downloadedLength > 0
+              ? {"range": "bytes=$downloadedLength-"}
+              : null,
+        );
+
+        status = "正在连接服务器 (第 ${attempt + 1} 次尝试)...";
+        log(status);
+        setState(() {});
+        await Future.delayed(const Duration(milliseconds: 250));
+
+        await dio.download(
+          url,
+          savePath,
+          options: options,
+          onReceiveProgress: (received, total) async {
+            if (total != -1) {
+              progress = (downloadedLength + received) /
+                  (downloadedLength + total) *
+                  100;
+              status = "正在接收数据 - ${progress.toStringAsFixed(3)}%";
+              setState(() {});
+            } else {
+              status = "正在接收数据 (未知总大小)...";
+              setState(() {});
+            }
+          },
+        );
+
+        status = "下载完成，文件已保存到: $savePath";
+        setState(() {});
+        await Future.delayed(const Duration(milliseconds: 250));
+        log(status);
+        break;
+      } on DioException catch (e) {
+        attempt++;
+        status = "下载失败 (第 $attempt 次): ${e.message}";
+        setState(() {});
+        await Future.delayed(const Duration(milliseconds: 250));
+        log(status);
+
+        if (attempt >= maxRetries) {
+          status = "已达到最大重试次数，下载终止";
+          setState(() {});
+          await Future.delayed(const Duration(milliseconds: 250));
+          log(status);
+        } else {
+          status = "准备重试...";
+          setState(() {});
+          log(status);
+          await Future.delayed(const Duration(seconds: 1));
+        }
+      } catch (e) {
+        status = "未知错误: $e";
+        setState(() {});
+        await Future.delayed(const Duration(milliseconds: 250));
+        log(status);
+        break;
+      }
+    }
+  }
+
+  String? rawPath;
+
+  Future<String?> findEasiNote() async {
+    final drives = ['C', 'D', 'E', 'F'];
+
+    final candidates = [
+      r'Program Files (x86)\Seewo\EasiNote\Main\EasiNote.exe',
+      r'Program Files\Seewo\EasiNote\Main\EasiNote.exe',
+      r'Seewo\EasiNote\Main\EasiNote.exe',
+      r'Main\EasiNote.exe',
+      r'EasiNote.exe',
+    ];
+
+    if (rawPath != null) {
+      for (final candidate in candidates) {
+        final path = "$rawPath\\$candidate";
+        if (await File(path).exists()) {
+          return path;
+        }
+      }
+    }
+
+    for (final drive in drives) {
+      for (final candidate in candidates) {
+        final path = "$drive:\\$candidate";
+        if (await File(path).exists()) {
+          return path;
+        }
+      }
+    }
+    return null;
+  }
+
+  Future<void> injectSelf(String path) async {
+    final app = File("EasiNote3Launcher.exe");
+    final flutterDll = File("flutter_windows.dll");
+    final screenDll = File("screen_retriever_windows_plugin.dll");
+    final windowManagerDll = File("window_manager_plugin.dll");
+    final dataDirectory = Directory("data");
+    final targetDataDir = Directory("$path/data");
+
+    await app.copy(r"$path\EasiNote3Launcher.exe");
+    await flutterDll.copy(r"$path\flutter_windows.dll");
+    await screenDll.copy(r"$path\screen_retriever_windows_plugin.dll");
+    await windowManagerDll.copy(r"$path\window_manager_plugin.dll");
+    await copyDirectory(dataDirectory, targetDataDir);
+  }
+
+  Future<void> copyDirectory(Directory source, Directory destination) async {
+    if (!await destination.exists()) {
+      destination.create(recursive: true);
+    }
+
+    await for (var entity in source.list(recursive: false)) {
+      if (entity case File file) {
+        final newPath = '${destination.path}/${file.uri.pathSegments.last}';
+        await file.copy(newPath);
+      } else if (entity case Directory directory) {
+        final newDir = Directory('${destination.path}/${directory.uri.pathSegments.last}');
+        await copyDirectory(directory, newDir);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -173,9 +334,12 @@ class _SplashScreenState extends State<SplashScreen>
         opacity: CurvedAnimation(parent: _controller, curve: const Interval(0.0, 0.2)),
         child: Container(
           width: 697,
-          height: 311 + (settingMode ? 60 : 0),
-          decoration: BoxDecoration( color: Colors.black, border: Border.all(color: Colors.white38, width: 1.5, ), ),
-          child: !settingMode ? Stack(
+          height: 311 + ((settingMode && !isTampered) || installMode ? 60 : 0),
+          decoration: BoxDecoration(
+            color: Colors.black,
+            border: Border.all(color: Colors.white38, width: 1.5,),
+          ),
+          child: (!settingMode && !installMode) || isTampered ? Stack(
             clipBehavior: Clip.hardEdge,
             children: [
               FutureBuilder(future: Settings.getNoAnimation(), builder: (_, snapshot,) {
@@ -308,7 +472,7 @@ class _SplashScreenState extends State<SplashScreen>
                 ),
               )
             ],
-          ) : Stack(
+          ) : !installMode ? Stack(
             clipBehavior: Clip.hardEdge,
             children: [
               Center(
@@ -324,8 +488,35 @@ class _SplashScreenState extends State<SplashScreen>
                       child: child,
                     );
                   },
-                  child: const Icon(Icons.settings, size: 256, color: Color(0x37FFFFFF)),
+                  child: AnimatedScale(
+                    scale: 1 + (isLoading ? 0.5 : 0),
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.fastOutSlowIn,
+                    child: const Icon(
+                      Icons.settings,
+                      size: 256,
+                      color: Color(0x37FFFFFF),
+                    ),
+                  ),
                 )
+              ),
+              Center(
+                child: ClipRect(
+                  child: TweenAnimationBuilder<double>(
+                    tween: Tween<double>(begin: isLoading ? 0 : 8, end: isLoading ? 8 : 0),
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.fastOutSlowIn,
+                    builder: (_, value, _) {
+                      return BackdropFilter(
+                        filter: ImageFilter.blur(
+                          sigmaX: value,
+                          sigmaY: value,
+                        ),
+                        child: Padding(padding: const EdgeInsets.all(32), child: SizedBox.expand(),),
+                      );
+                    },
+                  ),
+                ),
               ),
               Scaffold(
                 backgroundColor: Colors.transparent,
@@ -395,13 +586,18 @@ class _SplashScreenState extends State<SplashScreen>
                               inactiveThumbColor: Colors.white,
                               inactiveTrackColor: Colors.black,
                               onChanged: (v) async {
+                                setState(() {
+                                  isLoading = true;
+                                });
                                 await Settings.setNoAnimation(v);
                                 manager.triggerFastSpin(this, (v) {
                                   setState(() {
                                     tempAngle.value = v;
                                   });
                                 });
-                                setState(() {});
+                                setState(() {
+                                  isLoading = false;
+                                });
                               },
                             );
                           },
@@ -413,14 +609,30 @@ class _SplashScreenState extends State<SplashScreen>
                       mainAxisSize: MainAxisSize.max,
                       mainAxisAlignment: MainAxisAlignment.start,
                       children: [
-                        Icon(CupertinoIcons.wrench, color: Colors.white, size: 48,),
+                        Icon(Icons.construction, color: Colors.white, size: 48,),
                         const SizedBox(width: 8,),
                         Text("白板打不开?", style: TextStyle(color: Colors.white, fontSize: 24),),
                         SizedBox(width: 16,),
                         FilledButton(
-                          style: FilledButton.styleFrom(foregroundColor: Colors.white, backgroundColor: Colors.black, shape: RoundedRectangleBorder(borderRadius: BorderRadiusGeometry.all(Radius.circular(4))), padding: const EdgeInsets.only(left: 6, right: 6), ),
+                          style: ButtonStyle(
+                            foregroundColor: WidgetStateProperty.all(Colors.white),
+                            backgroundColor: WidgetStateProperty.all(Colors.black),
+                            side: WidgetStateProperty.all(
+                              const BorderSide(color: Colors.white, width: 0.5),
+                            ),
+                            shape: WidgetStateProperty.all<RoundedRectangleBorder>(
+                              RoundedRectangleBorder(
+                                borderRadius: BorderRadius.all(Radius.circular(4)),
+                              ),
+                            ),
+                            padding: WidgetStateProperty.all<EdgeInsetsGeometry>(const EdgeInsets.only(left: 6, right: 6)),
+                          ),
                           onPressed: () async {
                             if (!pressed) {
+                              setState(() {
+                                isLoading = true;
+                              });
+                              await Future.delayed(const Duration(milliseconds: 500));
                               final result0 = await Process.run( 'wmic',
                                   ['process', 'where', "name='EasiRunner.exe'", 'call', 'terminate']
                               );
@@ -454,12 +666,15 @@ class _SplashScreenState extends State<SplashScreen>
                                 tempAngle.value = v;
                               });
                             });
+                            setState(() {
+                              isLoading = false;
+                            });
                           },
                           child: AnimatedSize(
                             duration: const Duration(milliseconds: 300),
                             curve: Curves.easeInOut,
                             child: Text(
-                              pressed ? "请重启" : "尝试结束后台进程",
+                              pressed ? "点击重启" : "尝试结束后台进程",
                               key: ValueKey<bool>(pressed),
                             ),
                           )
@@ -476,25 +691,43 @@ class _SplashScreenState extends State<SplashScreen>
                         Text("提示需要激活?", style: TextStyle(color: Colors.white, fontSize: 24),),
                         SizedBox(width: 16,),
                         FilledButton(
-                            style: FilledButton.styleFrom(foregroundColor: Colors.white, backgroundColor: Colors.black, shape: RoundedRectangleBorder(borderRadius: BorderRadiusGeometry.all(Radius.circular(4))), padding: const EdgeInsets.only(left: 6, right: 6), ),
-                            onPressed: () async {
-                              final file = File(r"C:\ProgramData\EasiNote3\SWAF1501.swaf");
-                              if (!pressedFix && await file.exists()) await file.delete();
-                              manager.triggerFastSpin(this, (v) {
-                                setState(() {
-                                  tempAngle.value = v;
-                                  pressedFix = true;
-                                });
-                              });
-                            },
-                            child: AnimatedSize(
-                              duration: const Duration(milliseconds: 300),
-                              curve: Curves.easeInOut,
-                              child: Text(
-                                pressedFix ? "✓" : "尝试修复",
-                                key: ValueKey<bool>(pressedFix),
+                          style: ButtonStyle(
+                            foregroundColor: WidgetStateProperty.all(Colors.white),
+                            backgroundColor: WidgetStateProperty.all(Colors.black),
+                            side: WidgetStateProperty.all(
+                              const BorderSide(color: Colors.white, width: 0.5),
+                            ),
+                            shape: WidgetStateProperty.all<RoundedRectangleBorder>(
+                              RoundedRectangleBorder(
+                                borderRadius: BorderRadius.all(Radius.circular(4)),
                               ),
-                            )
+                            ),
+                            padding: WidgetStateProperty.all<EdgeInsetsGeometry>(const EdgeInsets.only(left: 6, right: 6)),
+                          ),
+                          onPressed: () async {
+                            setState(() {
+                              isLoading = true;
+                            });
+                            await Future.delayed(const Duration(milliseconds: 500));
+                            final file = File(r"C:\ProgramData\EasiNote3\SWAF1501.swaf");
+                            if (!pressedFix && await file.exists()) await file.delete();
+                            manager.triggerFastSpin(this, (v) {
+                              setState(() {
+                                tempAngle.value = v;
+                                pressedFix = true;
+                              });
+                            });
+                            setState(() {
+                              isLoading = false;
+                            });},
+                          child: AnimatedSize(
+                            duration: const Duration(milliseconds: 300),
+                            curve: Curves.easeInOut,
+                            child: !pressedFix ? Text(
+                              "尝试修复",
+                              key: ValueKey<bool>(pressedFix),
+                            ) : Icon(Icons.check, key: ValueKey<bool>(pressedFix),),
+                          ),
                         ),
                       ],
                     ),
@@ -502,9 +735,163 @@ class _SplashScreenState extends State<SplashScreen>
                 ),),
               )
             ],
-          )
-        ),
-      ),
+          ) : Stack(
+            children: [
+              Scaffold(
+                backgroundColor: Colors.transparent,
+                appBar: AppBar(
+                  backgroundColor: Colors.transparent,
+                  actions: [
+                    IconButton(onPressed: () {
+                      allExit(0);
+                    }, icon: Icon(
+                      Icons.close,
+                      color: Colors.white,
+                    )),
+                    const SizedBox(width: 8,)
+                  ],
+                ),
+              ),
+              Align(
+                alignment: Alignment.bottomLeft,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(padding: const EdgeInsets.only(left: 32), child: Text("EN3 Launcher 安装器",
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 48,
+                      ),
+                    ),),
+                    const SizedBox(height: 48,),
+                    Padding(padding: const EdgeInsets.only(left: 32), child: Text("希沃白板3路径:",
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 24,
+                      ),
+                    ),
+                    ),
+                    const SizedBox(height: 8,),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 32),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Container(
+                              height: 32,
+                              decoration: BoxDecoration(
+                                color: Colors.black,
+                                border: Border.all(color: Colors.white, width: 1.5),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 8),
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: FutureBuilder<String?>(
+                                    future: findEasiNote(),
+                                    builder: (context, snapshot) {
+                                      final path = snapshot.data;
+                                      return Text(
+                                        path ?? "未找到",
+                                        style: const TextStyle(color: Colors.white, fontSize: 18),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      );
+                                    },
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          FilledButton(
+                            style: ButtonStyle(
+                              foregroundColor: WidgetStateProperty.all(Colors.white),
+                              backgroundColor: WidgetStateProperty.all(Colors.black),
+                              side: WidgetStateProperty.all(
+                                const BorderSide(color: Colors.white, width: 1.5),
+                              ),
+                              shape: WidgetStateProperty.all(
+                                RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                              ),
+                            ),
+                            onPressed: () async {
+                              final path = await FilePickerWindows().getDirectoryPath();
+                              setState(() {
+                                rawPath = path;
+                              });
+                            },
+                            child: const Text("浏览..."),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 96),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Row(
+                        children: [
+                          const SizedBox(width: 20),
+                          Expanded(
+                            child: Text(
+                              "状态: $status",
+                              style: const TextStyle(color: Colors.white, fontSize: 24),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          FutureBuilder(future: findEasiNote(), builder: (_, snapshot) {
+                            return FilledButton(
+                                style: ButtonStyle(
+                                  foregroundColor: WidgetStateProperty.all(isLoading ? Colors.white30 : Colors.white),
+                                  backgroundColor: WidgetStateProperty.all(Colors.black),
+                                  side: WidgetStateProperty.all(
+                                    BorderSide(color: isLoading ? Colors.white30 : Colors.white, width: 1.5),
+                                  ),
+                                  shape: WidgetStateProperty.all(
+                                    RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                                  ),
+                                ),
+                                onPressed: isLoading ? null : () async {
+                                  setState(() {
+                                    isLoading = true;
+                                  });
+                                  if (snapshot.data == null) {
+                                    await downloadFile("https://down10.zol.com.cn/unify/xiazai/53/528184_20230516003806.exe?dname=EasiNoteSetup_3.1.2.3606.exe");
+                                  } else {
+
+                                  }
+                                  setState(() {
+                                    isLoading = false;
+                                  });
+                                },
+                                child: Row(
+                                  children: [
+                                    Icon(snapshot.data == null ? Icons.download : Icons.play_arrow),
+                                    const SizedBox(width: 8,),
+                                    Text(snapshot.data == null ? "下载希沃3安装包" : "启动任务")
+                                  ],
+                                )
+                            );
+                          })
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    LinearProgressIndicator(
+                      value: progress / 100,
+                      color: Colors.white,
+                      backgroundColor: Colors.white30,
+                    )
+                  ],
+                ),
+              )
+            ],
+          ),
+        )
+      )
     );
   }
 }
@@ -617,7 +1004,7 @@ String randomString(int length) {
 
 Future<void> checkSingleInstance() async {
   try {
-    await ServerSocket.bind(InternetAddress.loopbackIPv4, 12345);
+    await ServerSocket.bind(InternetAddress.loopbackIPv4, 53752);
   } catch (e) {
     allExit(0);
   }
