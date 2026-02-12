@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:isolate';
 import 'dart:math';
 import 'dart:ui';
 import 'package:crypto/crypto.dart';
@@ -112,6 +111,7 @@ class _SplashScreenState extends State<SplashScreen>
   bool isLoading = false;
   bool _exiting = false;
   bool injectDone = false;
+  bool isRunning = false;
   ValueNotifier<int> clrCount = ValueNotifier<int>(0);
 
   @override
@@ -246,7 +246,7 @@ class _SplashScreenState extends State<SplashScreen>
           savePath,
           options: options,
           onReceiveProgress: (received, total) async {
-            if (total != -1 && received > total * 0.01) {
+            if (total != -1) {
               switch (index) {
                 case 0:
                   progress = (received + downloadedLength) / total * 100;
@@ -258,7 +258,7 @@ class _SplashScreenState extends State<SplashScreen>
                   progress3 = (received + downloadedLength) / total * 100;
                 default:
               }
-              if (index == 0) {
+              if (received > total * 0.01) {
                 status = "正在接收数据 - ${((progress + progress1 + progress2 + progress3) / 4).toStringAsFixed(3)}%";
                 setState(() {});
               }
@@ -689,7 +689,31 @@ class _SplashScreenState extends State<SplashScreen>
                                 isLoading = true;
                               });
                               await Future.delayed(const Duration(milliseconds: 500));
-                              await killEasiProcesses();
+                              final result0 = await Process.run( 'wmic',
+                                  ['process', 'where', "name='EasiRunner.exe'", 'call', 'terminate']
+                              );
+                              log(result0.stdout);
+                              log(result0.stderr);
+
+                              final result = await Process.run(
+                                  'wmic',
+                                  ['process', 'where', "ExecutablePath='${File("EasiNote.exe").absolute.path.replaceAll(r"\", r"\\")}'", 'get', 'ProcessId']
+                              );
+
+                              final lines = result.stdout.toString().split('\n');
+                              int? id;
+                              for (var line in lines) {
+                                line = line.trim();
+                                if (line.isNotEmpty && line != 'ProcessId') {
+                                  id = int.tryParse(line) ?? -1;
+                                }
+                              }
+                              if (id != null && id != -1) {
+                                await killProcessByPid(id);
+                                setState(() {
+                                  pressed = true;
+                                });
+                              }
                             } else {
                               allExit(0);
                             }
@@ -941,7 +965,7 @@ class _SplashScreenState extends State<SplashScreen>
                                                     }
                                                   }
                                                 } else if (snapshot.data == null) {
-                                                  final path = "${(await getApplicationSupportDirectory()).absolute.path}\\Download";
+                                                  final path = (await getApplicationCacheDirectory()).absolute.path;
                                                   await deleteDirectory(Directory(path));
                                                   final tasks = <Future<void>>[];
                                                   final map = {
@@ -958,6 +982,7 @@ class _SplashScreenState extends State<SplashScreen>
                                                   await Future.wait(tasks);
                                                   final chunks = [ "$path\\chunk_0.exe", "$path\\chunk_1.exe", "$path\\chunk_2.exe", "$path\\chunk_3.exe", ];
                                                   status = "正在合并文件...";
+                                                  isRunning = true;
                                                   setState(() {});
                                                   await Future.delayed(const Duration(milliseconds: 250));
                                                   await mergeFiles(chunks, "$path\\EasiNoteSetup.exe");
@@ -966,9 +991,11 @@ class _SplashScreenState extends State<SplashScreen>
                                                   await Future.delayed(const Duration(milliseconds: 250));
                                                   if (await File("$path\\EasiNoteSetup.exe").exists()) {
                                                     await Process.start('$path\\EasiNoteSetup.exe', []);
+                                                    status = "正在监视快捷方式的生成...";
+                                                    setState(() {});
                                                     await monitorShortcut();
                                                     await Future.delayed(const Duration(milliseconds: 250));
-                                                    await injectSelf(snapshot.data!);
+                                                    await injectSelf((await findEasiNote())!);
                                                     status = "更新快捷方式中";
                                                     setState(() {});
                                                     await Future.delayed(const Duration(milliseconds: 250));
@@ -981,6 +1008,9 @@ class _SplashScreenState extends State<SplashScreen>
                                                     });
                                                   }
                                                 } else {
+                                                  setState(() {
+                                                    isRunning = true;
+                                                  });
                                                   await injectSelf(snapshot.data!);
                                                   await Future.delayed(const Duration(milliseconds: 250));
                                                   status = "更新快捷方式中";
@@ -996,6 +1026,7 @@ class _SplashScreenState extends State<SplashScreen>
                                                 }
                                                 setState(() {
                                                   isLoading = false;
+                                                  isRunning = false;
                                                 });
                                               },
                                               child: Row(
@@ -1011,44 +1042,49 @@ class _SplashScreenState extends State<SplashScreen>
                                     ),
                                   ),
                                   const SizedBox(height: 16),
-                                  Row(
-                                    children: [
-                                      Flexible(
-                                        flex: 1,
-                                        child: LinearProgressIndicator(
-                                          value: progress / 100,
-                                          color: Colors.white,
-                                          backgroundColor: Colors.white30,
+                                  AnimatedSwitcher(
+                                    duration: const Duration(milliseconds: 200),
+                                    child: isRunning ? LinearProgressIndicator(
+                                      color: Colors.white,
+                                      backgroundColor: Colors.white30,) : Row(
+                                      children: [
+                                        Flexible(
+                                          flex: 1,
+                                          child: LinearProgressIndicator(
+                                            value: progress / 100,
+                                            color: Colors.white,
+                                            backgroundColor: Colors.white30,
+                                          ),
                                         ),
-                                      ),
-                                      const SizedBox(width: 2,),
-                                      Flexible(
-                                        flex: 1,
-                                        child: LinearProgressIndicator(
-                                          value: progress1 / 100,
-                                          color: Colors.white,
-                                          backgroundColor: Colors.white30,
+                                        const SizedBox(width: 1,),
+                                        Flexible(
+                                          flex: 1,
+                                          child: LinearProgressIndicator(
+                                            value: progress1 / 100,
+                                            color: Colors.white,
+                                            backgroundColor: Colors.white30,
+                                          ),
                                         ),
-                                      ),
-                                      const SizedBox(width: 2,),
-                                      Flexible(
-                                        flex: 1,
-                                        child: LinearProgressIndicator(
-                                          value: progress2 / 100,
-                                          color: Colors.white,
-                                          backgroundColor: Colors.white30,
+                                        const SizedBox(width: 1,),
+                                        Flexible(
+                                          flex: 1,
+                                          child: LinearProgressIndicator(
+                                            value: progress2 / 100,
+                                            color: Colors.white,
+                                            backgroundColor: Colors.white30,
+                                          ),
                                         ),
-                                      ),
-                                      const SizedBox(width: 2,),
-                                      Flexible(
-                                        flex: 1,
-                                        child: LinearProgressIndicator(
-                                          value: progress3 / 100,
-                                          color: Colors.white,
-                                          backgroundColor: Colors.white30,
+                                        const SizedBox(width: 1,),
+                                        Flexible(
+                                          flex: 1,
+                                          child: LinearProgressIndicator(
+                                            value: progress3 / 100,
+                                            color: Colors.white,
+                                            backgroundColor: Colors.white30,
+                                          ),
                                         ),
-                                      ),
-                                    ],
+                                      ],
+                                    ),
                                   )
                                 ],
                               ),
@@ -1087,8 +1123,8 @@ Future<void> monitorShortcut({
   Duration interval = const Duration(seconds: 5),
 }) async {
   while (true) {
-    final file = File(r"C:\Users\Public\Desktop\希沃白板 3.lnk");
-    if (file.existsSync()) {
+    final file = File("C:\\Users\\Public\\Desktop\\希沃白板 3.lnk");
+    if (await file.exists()) {
       break;
     } else {
       await Future.delayed(interval);
@@ -1420,59 +1456,5 @@ class RotationManager extends ChangeNotifier {
 
   void disposeManager() {
     baseController.dispose();
-  }
-}
-
-Future<void> killEasiProcesses() async {
-  final receivePort = ReceivePort();
-  await Isolate.spawn(_processWorker, receivePort.sendPort);
-
-  final sendPort = await receivePort.first as SendPort;
-
-  final responsePort = ReceivePort();
-  sendPort.send([responsePort.sendPort]);
-
-  final result = await responsePort.first;
-  log("子 isolate 返回结果: $result");
-}
-
-void _processWorker(SendPort sendPort) async {
-  final receivePort = ReceivePort();
-  sendPort.send(receivePort.sendPort);
-
-  await for (var msg in receivePort) {
-    final replyPort = msg[0] as SendPort;
-
-    final _ = await Process.run(
-      'wmic',
-      ['process', 'where', "name='EasiRunner.exe'", 'call', 'terminate'],
-    );
-
-    final result = await Process.run(
-      'wmic',
-      [
-        'process',
-        'where',
-        "ExecutablePath='${File("EasiNote.exe").absolute.path.replaceAll(r"\\", r"\\\\")}'",
-        'get',
-        'ProcessId'
-      ],
-    );
-
-    int? id;
-    final lines = result.stdout.toString().split('\n');
-    for (var line in lines) {
-      line = line.trim();
-      if (line.isNotEmpty && line != 'ProcessId') {
-        id = int.tryParse(line) ?? -1;
-      }
-    }
-
-    if (id != null && id != -1) {
-      await Process.run('taskkill', ['/PID', '$id', '/F']);
-      replyPort.send("成功终止 PID=$id");
-    } else {
-      replyPort.send("未找到 EasiNote.exe 进程");
-    }
   }
 }
