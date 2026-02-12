@@ -583,7 +583,7 @@ class _SplashScreenState extends State<SplashScreen>
                   actions: [
                     IconButton(onPressed: () {
                       allExit(0);
-              }, icon: Icon(Icons.close, color: Colors.white,)),
+                    }, icon: Icon(Icons.close, color: Colors.white,)),
                     const SizedBox(width: 8,)
                   ],
                 ),
