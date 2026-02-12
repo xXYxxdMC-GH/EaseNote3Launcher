@@ -20,6 +20,8 @@ bool isTampered = false;
 
 bool settingMode = false;
 
+bool launched = false;
+
 late bool noAnim;
 
 late bool fastBoot;
@@ -29,8 +31,19 @@ bool installMode = false;
 RandomAccessFile? file;
 
 void main(List<String> args) async {
+  Timer.periodic(
+    const Duration(seconds: 5), (timer) {
+      if (!launched) {
+        exit(1);
+      } else {
+        timer.cancel();
+      }
+    },
+  );
   file = await startLock();
+  log("锁已显现");
   await recordLaunchAndCheckSettingMode();
+  log("文已铭记");
 
   if (await isProcessRunning() && !settingMode) {
     await Process.start("EasiRunner.exe", []);
@@ -38,27 +51,35 @@ void main(List<String> args) async {
   }
 
   WidgetsFlutterBinding.ensureInitialized();
+  log("组以相连");
 
   if (!settingMode) {
     try {
       await verifyAssets();
     } catch (_) {
       isTampered = true;
+      log("其资者损");
     }
   }
 
   if (!await File("EasiNote.exe").exists()) {
     installMode = true;
+    log("其本则没");
   }
 
   noAnim = await Settings.getNoAnimation();
+  log("无灵动之迹");
 
   fastBoot = await Settings.getFastboot();
+  log("无长繁之载");
 
   await clearLogFile();
+  log("扫赘余");
   await extractTtf();
+  log("解表象");
 
   await windowManager.ensureInitialized();
+  log("初窗");
 
   WindowOptions options = WindowOptions(
     size: Size(700, 310 + ((settingMode && !isTampered) || installMode ? 60 : 0)),
@@ -68,6 +89,7 @@ void main(List<String> args) async {
     titleBarStyle: TitleBarStyle.hidden,
     windowButtonVisibility: false,
   );
+  log("构架");
 
   windowManager.waitUntilReadyToShow(options, () async {
     await windowManager.hide();
@@ -75,8 +97,11 @@ void main(List<String> args) async {
     await windowManager.show();
     await windowManager.focus();
   });
+  log("亦待其显现");
 
+  launched = true;
   runApp(LauncherApp(args: args));
+  log("成形其灵体");
 }
 
 class LauncherApp extends StatelessWidget {
@@ -197,25 +222,6 @@ class _SplashScreenState extends State<SplashScreen>
   String status = "未开始";
 
   Future<void> downloadFile(String url, {int index = 0}) async {
-    final dio = Dio(
-      BaseOptions(
-        connectTimeout: const Duration(seconds: 10),
-        receiveTimeout: const Duration(seconds: 30),
-        followRedirects: true,
-        validateStatus: (status) {
-          return status != null && status < 500;
-        },
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0",
-          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "Accept-Encoding": "gzip, deflate, br, zstd",
-          "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-          "Connection": "keep-alive",
-          "Host": Uri.parse(url).host
-        }
-      ),
-    );
-
     final dir = await getApplicationCacheDirectory();
     final savePath = "${dir.path}/chunk_$index.exe";
 
@@ -224,67 +230,113 @@ class _SplashScreenState extends State<SplashScreen>
 
     while (attempt < maxRetries) {
       try {
-        int downloadedLength = 0;
-        final file = File(savePath);
-        if (await file.exists()) {
-          downloadedLength = await file.length();
-        }
-
-        final options = Options(
-          headers: downloadedLength > 0
-              ? {"range": "bytes=$downloadedLength-"}
-              : null,
-        );
-
         status = "正在连接服务器 (第 ${attempt + 1} 次尝试)...";
         log(status);
         setState(() {});
         await Future.delayed(const Duration(milliseconds: 250));
 
-        await dio.download(
-          url,
-          savePath,
-          options: options,
-          onReceiveProgress: (received, total) async {
-            if (total != -1) {
-              switch (index) {
-                case 0:
-                  progress = (received + downloadedLength) / total * 100;
-                case 1:
-                  progress1 = (received + downloadedLength) / total * 100;
-                case 2:
-                  progress2 = (received + downloadedLength) / total * 100;
-                case 3:
-                  progress3 = (received + downloadedLength) / total * 100;
-                default:
-              }
-              if (received > total * 0.01) {
-                status = "正在接收数据 - ${((progress + progress1 + progress2 + progress3) / 4).toStringAsFixed(3)}%";
-                setState(() {});
-              }
-            } else {
-              status = "正在接收数据 (未知总大小)...";
-              setState(() {});
-            }
-          },
+        final head = await Process.run(
+          'curl',
+          ['-I', '-L',
+        '-H',
+        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+        'AppleWebKit/537.36 (KHTML, like Gecko) '
+        'Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0',
+        '-H',
+        'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            '-H',
+            'Accept-Encoding: gzip, deflate, br, zstd',
+            '-H',
+        'Accept-Language: zh-CN,zh;q=0.9,en;q=0.8',
+        '-H',
+            'Connection: keep-alive',
+            '-H',
+            'Host: ${Uri.parse(url).host}', url],
+          runInShell: true,
+        );
+        final contentLengthLine = (head.stdout as String)
+            .split('\n')
+            .firstWhere(
+                (line) => line.toLowerCase().startsWith('content-length'),
+            orElse: () => '');
+        final total = contentLengthLine.isNotEmpty
+            ? int.tryParse(contentLengthLine.split(':').last.trim()) ?? -1
+            : -1;
+
+        log("文件总大小: $total 字节");
+
+        final process = await Process.start(
+          'curl',
+          [
+            '-L',
+            '-H',
+            'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                'AppleWebKit/537.36 (KHTML, like Gecko) '
+                'Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0',
+            '-H',
+            'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            '-H',
+            'Accept-Encoding: gzip, deflate, br, zstd',
+            '-H',
+            'Accept-Language: zh-CN,zh;q=0.9,en;q=0.8',
+            '-H',
+            'Connection: keep-alive',
+            '-H',
+            'Host: ${Uri.parse(url).host}',
+            url,
+            '-o',
+            savePath,
+          ],
+          runInShell: true,
         );
 
-        status = "下载完成，文件已保存到: $savePath";
-        setState(() {});
-        await Future.delayed(const Duration(milliseconds: 250));
-        log(status);
-        break;
-      } on DioException catch (e) {
+        process.stderr.transform(SystemEncoding().decoder).listen((data) {
+          if (total > 0) {
+            final downloaded = File(savePath).existsSync()
+                ? File(savePath).lengthSync()
+                : 0;
+            switch (index) {
+              case 0:
+                progress = downloaded / total * 100;
+                break;
+              case 1:
+                progress1 = downloaded / total * 100;
+                break;
+              case 2:
+                progress2 = downloaded / total * 100;
+                break;
+              case 3:
+                progress3 = downloaded / total * 100;
+                break;
+            }
+            status = "正在接收数据 - ${((progress + progress1 + progress2 + progress3) / 4).toStringAsFixed(3)}%";
+            setState(() {});
+            log(status);
+          } else {
+            status = "正在接收数据 (未知总大小)...";
+            setState(() {});
+            log(status);
+          }
+        });
+
+        final exitCode = await process.exitCode;
+        if (exitCode == 0) {
+          status = "下载完成，文件已保存到: $savePath";
+          setState(() {});
+          log(status);
+          break;
+        } else {
+          throw Exception("curl 退出码: $exitCode");
+        }
+      } catch (e) {
         attempt++;
-        status = "下载失败 (第 $attempt 次): ${e.message}";
+        status = "下载失败 (第 $attempt 次): $e";
         setState(() {});
-        await Future.delayed(const Duration(milliseconds: 250));
         log(status);
 
         if (attempt >= maxRetries) {
           status = "已达到最大重试次数，下载终止";
           setState(() {});
-          await Future.delayed(const Duration(milliseconds: 250));
           log(status);
         } else {
           status = "准备重试...";
@@ -292,12 +344,6 @@ class _SplashScreenState extends State<SplashScreen>
           log(status);
           await Future.delayed(const Duration(seconds: 1));
         }
-      } catch (e) {
-        status = "未知错误: $e";
-        setState(() {});
-        await Future.delayed(const Duration(milliseconds: 250));
-        log(status);
-        break;
       }
     }
   }
@@ -840,162 +886,180 @@ class _SplashScreenState extends State<SplashScreen>
                             ),
                             Align(
                               alignment: Alignment.bottomLeft,
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Padding(padding: const EdgeInsets.only(left: 32), child:
-                                  Text("EN3 Launcher 安装器",
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 48,
+                              child: ClipRect(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Padding(padding: const EdgeInsets.only(left: 32), child:
+                                    Text("EN3 Launcher 安装器",
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 48,
+                                      ),
                                     ),
-                                  ),
-                                  ),
-                                  const SizedBox(height: 48,),
-                                  Padding(padding: const EdgeInsets.only(left: 32), child:
-                                  Text("希沃白板3路径:",
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 24,
                                     ),
-                                  ),
-                                  ),
-                                  const SizedBox(height: 8,),
-                                  Padding(
-                                    padding: const EdgeInsets.symmetric(horizontal: 32),
-                                    child: Row(
-                                      children: [
-                                        Expanded(
-                                          child: Container(
-                                            height: 32,
-                                            decoration: BoxDecoration(
-                                              color: Colors.black,
-                                              border: Border.all(color: Colors.white, width: 1.5),
-                                              borderRadius: BorderRadius.circular(4),
-                                            ),
-                                            child: Padding(
-                                              padding: const EdgeInsets.symmetric(horizontal: 8),
-                                              child: Align(
-                                                alignment: Alignment.centerLeft,
-                                                child: FutureBuilder<String?>(
-                                                  future: findEasiNote(),
-                                                  builder: (context, snapshot) {
-                                                    final path = snapshot.data;
-                                                    return Text(
-                                                      path ?? "未找到",
-                                                      style: const TextStyle(color: Colors.white, fontSize: 18),
-                                                      maxLines: 1,
-                                                      overflow: TextOverflow.ellipsis,
-                                                    );
-                                                  },
-                                                ),
+                                    const SizedBox(height: 48,),
+                                    Padding(padding: const EdgeInsets.only(left: 32), child:
+                                    Text("希沃白板3路径:",
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 24,
+                                      ),
+                                    ),
+                                    ),
+                                    const SizedBox(height: 8,),
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 32),
+                                      child: Row(
+                                        children: [
+                                          Expanded(
+                                            child: Container(
+                                              height: 32,
+                                              decoration: BoxDecoration(
+                                                color: Colors.black,
+                                                border: Border.all(color: Colors.white, width: 1.5),
+                                                borderRadius: BorderRadius.circular(4),
                                               ),
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        FilledButton(
-                                          style: ButtonStyle(
-                                            foregroundColor: WidgetStateProperty.all(Colors.white),
-                                            backgroundColor: WidgetStateProperty.all(Colors.black),
-                                            side: WidgetStateProperty.all(
-                                              const BorderSide(color: Colors.white, width: 1.5),
-                                            ),
-                                            shape: WidgetStateProperty.all(
-                                              RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                                            ),
-                                          ),
-                                          onPressed: () async {
-                                            final path = await FilePickerWindows().getDirectoryPath();
-                                            setState(() {
-                                              rawPath = path;
-                                            });
-                                          },
-                                          child: const Text("浏览..."),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  const SizedBox(height: 96),
-                                  Padding(
-                                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                                    child: Row(
-                                      children: [
-                                        const SizedBox(width: 20),
-                                        Expanded(
-                                          child: Text(
-                                            "状态: $status",
-                                            style: const TextStyle(color: Colors.white, fontSize: 24),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                        FutureBuilder(future: findEasiNote(), builder: (_, snapshot) {
-                                          return FilledButton(
-                                              style: ButtonStyle(
-                                                foregroundColor: WidgetStateProperty.all(isLoading ? Colors.white30 : Colors.white),
-                                                backgroundColor: WidgetStateProperty.all(Colors.black),
-                                                side: WidgetStateProperty.all(
-                                                  BorderSide(color: isLoading ? Colors.white30 : Colors.white, width: 1.5),
-                                                ),
-                                                shape: WidgetStateProperty.all(
-                                                  RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                                                ),
-                                              ),
-                                              onPressed: isLoading ? null : () async {
-                                                setState(() {
-                                                  isLoading = true;
-                                                });
-                                                String? currentPath = await findEasiNote();
-                                                if (injectDone) {
-                                                  final targetPath = currentPath ?? rawPath;
-                                                  if (targetPath != null) {
-                                                    final file = File("$targetPath\\EasiNote3Launcher.exe");
-                                                    if (await file.exists()) {
-                                                      Process.start(
-                                                        "$targetPath\\EasiNote3Launcher.exe",
-                                                        [],
-                                                        mode: ProcessStartMode.detached,
-                                                        workingDirectory: targetPath
+                                              child: Padding(
+                                                padding: const EdgeInsets.symmetric(horizontal: 8),
+                                                child: Align(
+                                                  alignment: Alignment.centerLeft,
+                                                  child: FutureBuilder<String?>(
+                                                    future: findEasiNote(),
+                                                    builder: (context, snapshot) {
+                                                      final path = snapshot.data;
+                                                      return Text(
+                                                        path ?? "未找到",
+                                                        style: const TextStyle(color: Colors.white, fontSize: 18),
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow.ellipsis,
                                                       );
-                                                      allExit(0);
-                                                    } else {
-                                                      setState(() => injectDone = false);
+                                                    },
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          FilledButton(
+                                            style: ButtonStyle(
+                                              foregroundColor: WidgetStateProperty.all(Colors.white),
+                                              backgroundColor: WidgetStateProperty.all(Colors.black),
+                                              side: WidgetStateProperty.all(
+                                                const BorderSide(color: Colors.white, width: 1.5),
+                                              ),
+                                              shape: WidgetStateProperty.all(
+                                                RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                                              ),
+                                            ),
+                                            onPressed: () async {
+                                              final path = await FilePickerWindows().getDirectoryPath();
+                                              setState(() {
+                                                rawPath = path;
+                                              });
+                                            },
+                                            child: const Text("浏览..."),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    const SizedBox(height: 96),
+                                    Padding(
+                                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                                      child: Row(
+                                        children: [
+                                          const SizedBox(width: 20),
+                                          Expanded(
+                                            child: Text(
+                                              "状态: $status",
+                                              style: const TextStyle(color: Colors.white, fontSize: 24),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                          FutureBuilder(future: findEasiNote(), builder: (_, snapshot) {
+                                            return FilledButton(
+                                                style: ButtonStyle(
+                                                  foregroundColor: WidgetStateProperty.all(isLoading ? Colors.white30 : Colors.white),
+                                                  backgroundColor: WidgetStateProperty.all(Colors.black),
+                                                  side: WidgetStateProperty.all(
+                                                    BorderSide(color: isLoading ? Colors.white30 : Colors.white, width: 1.5),
+                                                  ),
+                                                  shape: WidgetStateProperty.all(
+                                                    RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                                                  ),
+                                                ),
+                                                onPressed: isLoading ? null : () async {
+                                                  setState(() {
+                                                    isLoading = true;
+                                                  });
+                                                  String? currentPath = await findEasiNote();
+                                                  if (injectDone) {
+                                                    final targetPath = currentPath ?? rawPath;
+                                                    if (targetPath != null) {
+                                                      final file = File("$targetPath\\EasiNote3Launcher.exe");
+                                                      if (await file.exists()) {
+                                                        Process.start(
+                                                            "$targetPath\\EasiNote3Launcher.exe",
+                                                            [],
+                                                            mode: ProcessStartMode.detached,
+                                                            workingDirectory: targetPath
+                                                        );
+                                                        allExit(0);
+                                                      } else {
+                                                        setState(() => injectDone = false);
+                                                      }
                                                     }
-                                                  }
-                                                } else if (snapshot.data == null) {
-                                                  final path = (await getApplicationCacheDirectory()).absolute.path;
-                                                  await deleteDirectory(Directory(path));
-                                                  final tasks = <Future<void>>[];
-                                                  final map = {
-                                                    "iZOJk3ibop2j": "5cy8",
-                                                    "i7k3K3ibor8h": "a1g1",
-                                                    "iPzth3ibolve": "4axz",
-                                                    "igpgh3ibomyd": "a3h1"
-                                                  };
-                                                  for (int i = 0;i<4;i++) {
-                                                    String? url = await fetchDownloadLink(map.keys.elementAt(i), map.values.elementAt(i));
-                                                    if (url == null) continue;
-                                                    tasks.add(downloadFile(url, index: i));
-                                                  }
-                                                  await Future.wait(tasks);
-                                                  final chunks = [ "$path\\chunk_0.exe", "$path\\chunk_1.exe", "$path\\chunk_2.exe", "$path\\chunk_3.exe", ];
-                                                  status = "正在合并文件...";
-                                                  isRunning = true;
-                                                  setState(() {});
-                                                  await Future.delayed(const Duration(milliseconds: 250));
-                                                  await mergeFiles(chunks, "$path\\EasiNoteSetup.exe");
-                                                  status = "合并完成，开始安装，请按照指示安装";
-                                                  setState(() {});
-                                                  await Future.delayed(const Duration(milliseconds: 250));
-                                                  if (await File("$path\\EasiNoteSetup.exe").exists()) {
-                                                    await Process.start('$path\\EasiNoteSetup.exe', []);
-                                                    status = "正在监视快捷方式的生成...";
+                                                  } else if (snapshot.data == null) {
+                                                    final path = (await getApplicationCacheDirectory()).absolute.path;
+                                                    await deleteDirectory(Directory(path));
+                                                    final tasks = <Future<void>>[];
+                                                    final map = {
+                                                      "iZOJk3ibop2j": "5cy8",
+                                                      "i7k3K3ibor8h": "a1g1",
+                                                      "iPzth3ibolve": "4axz",
+                                                      "igpgh3ibomyd": "a3h1"
+                                                    };
+                                                    for (int i = 0;i<4;i++) {
+                                                      String? url = await fetchDownloadLink(map.keys.elementAt(i), map.values.elementAt(i));
+                                                      if (url == null) continue;
+                                                      tasks.add(downloadFile(url, index: i));
+                                                    }
+                                                    await Future.wait(tasks);
+                                                    final chunks = [ "$path\\chunk_0.exe", "$path\\chunk_1.exe", "$path\\chunk_2.exe", "$path\\chunk_3.exe", ];
+                                                    status = "正在合并文件...";
+                                                    isRunning = true;
                                                     setState(() {});
-                                                    await monitorShortcut();
                                                     await Future.delayed(const Duration(milliseconds: 250));
-                                                    await injectSelf((await findEasiNote())!);
+                                                    await mergeFiles(chunks, "$path\\EasiNoteSetup.exe");
+                                                    status = "合并完成，开始安装，请按照指示安装";
+                                                    setState(() {});
+                                                    await Future.delayed(const Duration(milliseconds: 250));
+                                                    if (await File("$path\\EasiNoteSetup.exe").exists()) {
+                                                      await Process.start('$path\\EasiNoteSetup.exe', []);
+                                                      status = "正在监视快捷方式的生成...";
+                                                      setState(() {});
+                                                      await monitorShortcut();
+                                                      await Future.delayed(const Duration(milliseconds: 250));
+                                                      await injectSelf((await findEasiNote())!);
+                                                      status = "更新快捷方式中";
+                                                      setState(() {});
+                                                      await Future.delayed(const Duration(milliseconds: 250));
+                                                      await updateUserShortcut((await findEasiNote())!);
+                                                      status = "更新完成";
+                                                      setState(() {});
+                                                      await Future.delayed(const Duration(milliseconds: 250));
+                                                      setState(() {
+                                                        injectDone = true;
+                                                      });
+                                                    }
+                                                  } else {
+                                                    setState(() {
+                                                      isRunning = true;
+                                                    });
+                                                    await injectSelf(snapshot.data!);
+                                                    await Future.delayed(const Duration(milliseconds: 250));
                                                     status = "更新快捷方式中";
                                                     setState(() {});
                                                     await Future.delayed(const Duration(milliseconds: 250));
@@ -1007,86 +1071,98 @@ class _SplashScreenState extends State<SplashScreen>
                                                       injectDone = true;
                                                     });
                                                   }
-                                                } else {
                                                   setState(() {
-                                                    isRunning = true;
+                                                    isLoading = false;
+                                                    isRunning = false;
                                                   });
-                                                  await injectSelf(snapshot.data!);
-                                                  await Future.delayed(const Duration(milliseconds: 250));
-                                                  status = "更新快捷方式中";
-                                                  setState(() {});
-                                                  await Future.delayed(const Duration(milliseconds: 250));
-                                                  await updateUserShortcut((await findEasiNote())!);
-                                                  status = "更新完成";
-                                                  setState(() {});
-                                                  await Future.delayed(const Duration(milliseconds: 250));
-                                                  setState(() {
-                                                    injectDone = true;
-                                                  });
-                                                }
-                                                setState(() {
-                                                  isLoading = false;
-                                                  isRunning = false;
-                                                });
-                                              },
-                                              child: Row(
-                                                children: [
-                                                  Icon(snapshot.data == null ? Icons.download : injectDone ? Icons.check : Icons.play_arrow),
-                                                  const SizedBox(width: 8,),
-                                                  Text(snapshot.data == null ? "下载希沃3安装包" : injectDone ? "启动希沃白板3" : "启动任务")
-                                                ],
-                                              )
-                                          );
-                                        })
-                                      ],
+                                                },
+                                                child: Row(
+                                                  children: [
+                                                    Icon(snapshot.data == null ? Icons.download : injectDone ? Icons.check : Icons.play_arrow),
+                                                    const SizedBox(width: 8,),
+                                                    Text(snapshot.data == null ? "下载希沃3安装包" : injectDone ? "启动希沃白板3" : "启动任务")
+                                                  ],
+                                                )
+                                            );
+                                          })
+                                        ],
+                                      ),
                                     ),
-                                  ),
-                                  const SizedBox(height: 16),
-                                  AnimatedSwitcher(
-                                    duration: const Duration(milliseconds: 200),
-                                    child: isRunning ? LinearProgressIndicator(
-                                      color: Colors.white,
-                                      backgroundColor: Colors.white30,) : Row(
-                                      children: [
-                                        Flexible(
-                                          flex: 1,
-                                          child: LinearProgressIndicator(
-                                            value: progress / 100,
-                                            color: Colors.white,
-                                            backgroundColor: Colors.white30,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 1,),
-                                        Flexible(
-                                          flex: 1,
-                                          child: LinearProgressIndicator(
-                                            value: progress1 / 100,
-                                            color: Colors.white,
-                                            backgroundColor: Colors.white30,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 1,),
-                                        Flexible(
-                                          flex: 1,
-                                          child: LinearProgressIndicator(
-                                            value: progress2 / 100,
-                                            color: Colors.white,
-                                            backgroundColor: Colors.white30,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 1,),
-                                        Flexible(
-                                          flex: 1,
-                                          child: LinearProgressIndicator(
-                                            value: progress3 / 100,
-                                            color: Colors.white,
-                                            backgroundColor: Colors.white30,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  )
-                                ],
+                                    const SizedBox(height: 16),
+                                    AnimatedSwitcher(
+                                        duration: const Duration(milliseconds: 200),
+                                        child: isRunning ? LinearProgressIndicator(
+                                          color: Colors.white,
+                                          backgroundColor: Colors.white30,) : Row(
+                                          children: [
+                                            Flexible(
+                                              flex: 1,
+                                              child: TweenAnimationBuilder<double>(
+                                                tween: Tween<double>(begin: 0, end: progress / 100),
+                                                curve: Curves.fastOutSlowIn,
+                                                duration: const Duration(milliseconds: 300),
+                                                builder: (context, value, child) {
+                                                  return LinearProgressIndicator(
+                                                    value: value,
+                                                    color: Colors.white,
+                                                    backgroundColor: Colors.white30,
+                                                  );
+                                                },
+                                              ),
+                                            ),
+                                            const SizedBox(width: 1),
+                                            Flexible(
+                                              flex: 1,
+                                              child: TweenAnimationBuilder<double>(
+                                                tween: Tween<double>(begin: 0, end: progress1 / 100),
+                                                curve: Curves.fastOutSlowIn,
+                                                duration: const Duration(milliseconds: 300),
+                                                builder: (context, value, child) {
+                                                  return LinearProgressIndicator(
+                                                    value: value,
+                                                    color: Colors.white,
+                                                    backgroundColor: Colors.white30,
+                                                  );
+                                                },
+                                              ),
+                                            ),
+                                            const SizedBox(width: 1),
+                                            Flexible(
+                                              flex: 1,
+                                              child: TweenAnimationBuilder<double>(
+                                                tween: Tween<double>(begin: 0, end: progress2 / 100),
+                                                curve: Curves.fastOutSlowIn,
+                                                duration: const Duration(milliseconds: 300),
+                                                builder: (context, value, child) {
+                                                  return LinearProgressIndicator(
+                                                    value: value,
+                                                    color: Colors.white,
+                                                    backgroundColor: Colors.white30,
+                                                  );
+                                                },
+                                              ),
+                                            ),
+                                            const SizedBox(width: 1),
+                                            Flexible(
+                                              flex: 1,
+                                              child: TweenAnimationBuilder<double>(
+                                                tween: Tween<double>(begin: 0, end: progress3 / 100),
+                                                curve: Curves.fastOutSlowIn,
+                                                duration: const Duration(milliseconds: 300),
+                                                builder: (context, value, child) {
+                                                  return LinearProgressIndicator(
+                                                    value: value,
+                                                    color: Colors.white,
+                                                    backgroundColor: Colors.white30,
+                                                  );
+                                                },
+                                              ),
+                                            ),
+                                          ],
+                                        )
+                                    )
+                                  ],
+                                ),
                               ),
                             ),
                           ],
