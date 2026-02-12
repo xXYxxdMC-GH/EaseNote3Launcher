@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math';
 import 'dart:ui';
 import 'package:crypto/crypto.dart';
@@ -24,12 +25,11 @@ late bool noAnim;
 
 late bool fastBoot;
 
-late bool installMode;
+bool installMode = false;
 
-late RandomAccessFile? file;
+RandomAccessFile? file;
 
 void main(List<String> args) async {
-  await checkSingleInstance();
   file = await startLock();
   await recordLaunchAndCheckSettingMode();
 
@@ -111,6 +111,7 @@ class _SplashScreenState extends State<SplashScreen>
   bool pressedFix = false;
   bool isLoading = false;
   bool _exiting = false;
+  bool injectDone = false;
   ValueNotifier<int> clrCount = ValueNotifier<int>(0);
 
   @override
@@ -121,11 +122,11 @@ class _SplashScreenState extends State<SplashScreen>
       duration: const Duration(milliseconds: 2000),
     )..forward(from: (noAnim && !isTampered) ? 0.7 : 0);
 
-    if (fastBoot) startEasiNote();
+    if (fastBoot && !isTampered && !settingMode && !installMode) startEasiNote();
 
     manager = RotationManager(this);
 
-    if (!isTampered && !settingMode) {
+    if (!isTampered && !settingMode && !installMode) {
       _controller.addStatusListener((status) async {
         if (status == AnimationStatus.completed) startEasiNote();
       });
@@ -164,30 +165,59 @@ class _SplashScreenState extends State<SplashScreen>
     });
 
     clrCount.addListener(() async {
-      if (!_exiting && clrCount.value >= 3) {
-        _exiting = true;
-        process.stdin.writeln(".detach");
-        await process.stdin.flush();
-        process.stdin.writeln("q");
-        await process.stdin.flush();
-        allExit(0);
+      if (!_exiting && clrCount.value >= 2) {
+        safeExit(process);
       }
     });
+
+    Timer(const Duration(seconds: 20), () async {
+      safeExit(process);
+    });
+
+    await process.exitCode;
+
+    safeExit(process);
+  }
+
+  void safeExit(Process process) async {
+    if (!_exiting) {
+      _exiting = true;
+      process.stdin.writeln(".detach");
+      await process.stdin.flush();
+      process.stdin.writeln("q");
+      await process.stdin.flush();
+      allExit(0);
+    }
   }
 
   double progress = 0.0;
+  double progress1 = 0.0;
+  double progress2 = 0.0;
+  double progress3 = 0.0;
   String status = "未开始";
 
-  Future<void> downloadFile(String url) async {
+  Future<void> downloadFile(String url, {int index = 0}) async {
     final dio = Dio(
       BaseOptions(
         connectTimeout: const Duration(seconds: 10),
         receiveTimeout: const Duration(seconds: 30),
+        followRedirects: true,
+        validateStatus: (status) {
+          return status != null && status < 500;
+        },
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Encoding": "gzip, deflate, br, zstd",
+          "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+          "Connection": "keep-alive",
+          "Host": Uri.parse(url).host
+        }
       ),
     );
 
     final dir = await getApplicationCacheDirectory();
-    final savePath = "${dir.path}/EasiNote3.exe";
+    final savePath = "${dir.path}/chunk_$index.exe";
 
     const maxRetries = 5;
     int attempt = 0;
@@ -216,12 +246,22 @@ class _SplashScreenState extends State<SplashScreen>
           savePath,
           options: options,
           onReceiveProgress: (received, total) async {
-            if (total != -1) {
-              progress = (downloadedLength + received) /
-                  (downloadedLength + total) *
-                  100;
-              status = "正在接收数据 - ${progress.toStringAsFixed(3)}%";
-              setState(() {});
+            if (total != -1 && received > total * 0.01) {
+              switch (index) {
+                case 0:
+                  progress = (received + downloadedLength) / total * 100;
+                case 1:
+                  progress1 = (received + downloadedLength) / total * 100;
+                case 2:
+                  progress2 = (received + downloadedLength) / total * 100;
+                case 3:
+                  progress3 = (received + downloadedLength) / total * 100;
+                default:
+              }
+              if (index == 0) {
+                status = "正在接收数据 - ${((progress + progress1 + progress2 + progress3) / 4).toStringAsFixed(3)}%";
+                setState(() {});
+              }
             } else {
               status = "正在接收数据 (未知总大小)...";
               setState(() {});
@@ -268,17 +308,16 @@ class _SplashScreenState extends State<SplashScreen>
     final drives = ['C', 'D', 'E', 'F'];
 
     final candidates = [
-      r'Program Files (x86)\Seewo\EasiNote\Main\EasiNote.exe',
-      r'Program Files\Seewo\EasiNote\Main\EasiNote.exe',
-      r'Seewo\EasiNote\Main\EasiNote.exe',
-      r'Main\EasiNote.exe',
-      r'EasiNote.exe',
+      r'Program Files (x86)\Seewo\EasiNote\Main',
+      r'Program Files\Seewo\EasiNote\Main',
+      r'Seewo\EasiNote\Main',
+      r'Main',
     ];
 
     if (rawPath != null) {
       for (final candidate in candidates) {
         final path = "$rawPath\\$candidate";
-        if (await File(path).exists()) {
+        if (await Directory(path).exists() && await File("$path\\EasiNote.exe").exists()) {
           return path;
         }
       }
@@ -287,7 +326,7 @@ class _SplashScreenState extends State<SplashScreen>
     for (final drive in drives) {
       for (final candidate in candidates) {
         final path = "$drive:\\$candidate";
-        if (await File(path).exists()) {
+        if (await Directory(path).exists() && await File("$path\\EasiNote.exe").exists()) {
           return path;
         }
       }
@@ -296,26 +335,27 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   Future<void> injectSelf(String path) async {
+    final currentPath = File(Platform.resolvedExecutable).parent.path;
     status = "正在注入...";
     setState(() {});
     await Future.delayed(const Duration(milliseconds: 250));
-    final app = File("EasiNote3Launcher.exe");
-    final flutterDll = File("flutter_windows.dll");
-    final screenDll = File("screen_retriever_windows_plugin.dll");
-    final windowManagerDll = File("window_manager_plugin.dll");
-    final dataDirectory = Directory("data");
+    final app = File("$currentPath/EasiNote3Launcher.exe");
+    final flutterDll = File("$currentPath/flutter_windows.dll");
+    final screenDll = File("$currentPath/screen_retriever_windows_plugin.dll");
+    final windowManagerDll = File("$currentPath/window_manager_plugin.dll");
+    final dataDirectory = Directory("$currentPath/data");
     final targetDataDir = Directory("$path/data");
 
     status = "正在注入主程序...";
     setState(() {});
     await Future.delayed(const Duration(milliseconds: 250));
-    await app.copy(r"$path\EasiNote3Launcher.exe");
+    await app.copy("$path\\EasiNote3Launcher.exe");
     status = "正在注入DLL...";
     setState(() {});
     await Future.delayed(const Duration(milliseconds: 250));
-    await flutterDll.copy(r"$path\flutter_windows.dll");
-    await screenDll.copy(r"$path\screen_retriever_windows_plugin.dll");
-    await windowManagerDll.copy(r"$path\window_manager_plugin.dll");
+    await flutterDll.copy("$path\\flutter_windows.dll");
+    await screenDll.copy("$path\\screen_retriever_windows_plugin.dll");
+    await windowManagerDll.copy("$path\\window_manager_plugin.dll");
     status = "正在注入数据...";
     setState(() {});
     await Future.delayed(const Duration(milliseconds: 250));
@@ -327,19 +367,21 @@ class _SplashScreenState extends State<SplashScreen>
 
   Future<void> copyDirectory(Directory source, Directory destination) async {
     if (!await destination.exists()) {
-      destination.create(recursive: true);
+      await destination.create(recursive: true);
     }
 
-    await for (var entity in source.list(recursive: false)) {
-      if (entity case File file) {
-        final newPath = '${destination.path}/${file.uri.pathSegments.last}';
-        await file.copy(newPath);
-      } else if (entity case Directory directory) {
-        final newDir = Directory('${destination.path}/${directory.uri.pathSegments.last}');
-        await copyDirectory(directory, newDir);
+    await for (var entity in source.list(recursive: true)) {
+      final relativePath = path.relative(entity.path, from: source.path);
+      final newPath = path.join(destination.path, relativePath);
+
+      if (entity is File) {
+        await File(entity.path).copy(newPath);
+      } else if (entity is Directory) {
+        await Directory(newPath).create(recursive: true);
       }
     }
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -647,31 +689,7 @@ class _SplashScreenState extends State<SplashScreen>
                                 isLoading = true;
                               });
                               await Future.delayed(const Duration(milliseconds: 500));
-                              final result0 = await Process.run( 'wmic',
-                                  ['process', 'where', "name='EasiRunner.exe'", 'call', 'terminate']
-                              );
-                              log(result0.stdout);
-                              log(result0.stderr);
-
-                              final result = await Process.run(
-                                  'wmic',
-                                  ['process', 'where', "ExecutablePath='${File("EasiNote.exe").absolute.path.replaceAll(r"\", r"\\")}'", 'get', 'ProcessId']
-                              );
-
-                              final lines = result.stdout.toString().split('\n');
-                              int? id;
-                              for (var line in lines) {
-                                line = line.trim();
-                                if (line.isNotEmpty && line != 'ProcessId') {
-                                  id = int.tryParse(line) ?? -1;
-                                }
-                              }
-                              if (id != null && id != -1) {
-                                await killProcessByPid(id);
-                                setState(() {
-                                  pressed = true;
-                                });
-                              }
+                              await killEasiProcesses();
                             } else {
                               allExit(0);
                             }
@@ -758,11 +776,23 @@ class _SplashScreenState extends State<SplashScreen>
                 child: Stack(
                   children: [
                     if (data) Center(
-                      child: Text("请以管理员权限重启程序以注入",
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 44,
-                        ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text("请以管理员权限重启程序以注入",
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 44,
+                            ),
+                          ),
+                          const SizedBox(height: 16,),
+                          ElevatedButton.icon(onPressed: () {
+                            allExit(0);
+                          }, label: Text("退出", style: const TextStyle(color: Colors.black),), icon: Icon(Icons.logout),
+                            style: ElevatedButton.styleFrom(
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadiusGeometry.all(Radius.circular(4)))
+                            ),),
+                        ],
                       ),
                     ),
                     ImageFiltered(
@@ -893,10 +923,76 @@ class _SplashScreenState extends State<SplashScreen>
                                                 setState(() {
                                                   isLoading = true;
                                                 });
-                                                if (snapshot.data == null) {
-                                                  await downloadFile("https://down10.zol.com.cn/unify/xiazai/53/528184_20230516003806.exe?dname=EasiNoteSetup_3.1.2.3606.exe");
+                                                String? currentPath = await findEasiNote();
+                                                if (injectDone) {
+                                                  final targetPath = currentPath ?? rawPath;
+                                                  if (targetPath != null) {
+                                                    final file = File("$targetPath\\EasiNote3Launcher.exe");
+                                                    if (await file.exists()) {
+                                                      Process.start(
+                                                        "$targetPath\\EasiNote3Launcher.exe",
+                                                        [],
+                                                        mode: ProcessStartMode.detached,
+                                                        workingDirectory: targetPath
+                                                      );
+                                                      allExit(0);
+                                                    } else {
+                                                      setState(() => injectDone = false);
+                                                    }
+                                                  }
+                                                } else if (snapshot.data == null) {
+                                                  final path = "${(await getApplicationSupportDirectory()).absolute.path}\\Download";
+                                                  await deleteDirectory(Directory(path));
+                                                  final tasks = <Future<void>>[];
+                                                  final map = {
+                                                    "iZOJk3ibop2j": "5cy8",
+                                                    "i7k3K3ibor8h": "a1g1",
+                                                    "iPzth3ibolve": "4axz",
+                                                    "igpgh3ibomyd": "a3h1"
+                                                  };
+                                                  for (int i = 0;i<4;i++) {
+                                                    String? url = await fetchDownloadLink(map.keys.elementAt(i), map.values.elementAt(i));
+                                                    if (url == null) continue;
+                                                    tasks.add(downloadFile(url, index: i));
+                                                  }
+                                                  await Future.wait(tasks);
+                                                  final chunks = [ "$path\\chunk_0.exe", "$path\\chunk_1.exe", "$path\\chunk_2.exe", "$path\\chunk_3.exe", ];
+                                                  status = "正在合并文件...";
+                                                  setState(() {});
+                                                  await Future.delayed(const Duration(milliseconds: 250));
+                                                  await mergeFiles(chunks, "$path\\EasiNoteSetup.exe");
+                                                  status = "合并完成，开始安装，请按照指示安装";
+                                                  setState(() {});
+                                                  await Future.delayed(const Duration(milliseconds: 250));
+                                                  if (await File("$path\\EasiNoteSetup.exe").exists()) {
+                                                    await Process.start('$path\\EasiNoteSetup.exe', []);
+                                                    await monitorShortcut();
+                                                    await Future.delayed(const Duration(milliseconds: 250));
+                                                    await injectSelf(snapshot.data!);
+                                                    status = "更新快捷方式中";
+                                                    setState(() {});
+                                                    await Future.delayed(const Duration(milliseconds: 250));
+                                                    await updateUserShortcut((await findEasiNote())!);
+                                                    status = "更新完成";
+                                                    setState(() {});
+                                                    await Future.delayed(const Duration(milliseconds: 250));
+                                                    setState(() {
+                                                      injectDone = true;
+                                                    });
+                                                  }
                                                 } else {
                                                   await injectSelf(snapshot.data!);
+                                                  await Future.delayed(const Duration(milliseconds: 250));
+                                                  status = "更新快捷方式中";
+                                                  setState(() {});
+                                                  await Future.delayed(const Duration(milliseconds: 250));
+                                                  await updateUserShortcut((await findEasiNote())!);
+                                                  status = "更新完成";
+                                                  setState(() {});
+                                                  await Future.delayed(const Duration(milliseconds: 250));
+                                                  setState(() {
+                                                    injectDone = true;
+                                                  });
                                                 }
                                                 setState(() {
                                                   isLoading = false;
@@ -904,9 +1000,9 @@ class _SplashScreenState extends State<SplashScreen>
                                               },
                                               child: Row(
                                                 children: [
-                                                  Icon(snapshot.data == null ? Icons.download : Icons.play_arrow),
+                                                  Icon(snapshot.data == null ? Icons.download : injectDone ? Icons.check : Icons.play_arrow),
                                                   const SizedBox(width: 8,),
-                                                  Text(snapshot.data == null ? "下载希沃3安装包" : "启动任务")
+                                                  Text(snapshot.data == null ? "下载希沃3安装包" : injectDone ? "启动希沃白板3" : "启动任务")
                                                 ],
                                               )
                                           );
@@ -915,10 +1011,44 @@ class _SplashScreenState extends State<SplashScreen>
                                     ),
                                   ),
                                   const SizedBox(height: 16),
-                                  LinearProgressIndicator(
-                                    value: progress / 100,
-                                    color: Colors.white,
-                                    backgroundColor: Colors.white30,
+                                  Row(
+                                    children: [
+                                      Flexible(
+                                        flex: 1,
+                                        child: LinearProgressIndicator(
+                                          value: progress / 100,
+                                          color: Colors.white,
+                                          backgroundColor: Colors.white30,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 2,),
+                                      Flexible(
+                                        flex: 1,
+                                        child: LinearProgressIndicator(
+                                          value: progress1 / 100,
+                                          color: Colors.white,
+                                          backgroundColor: Colors.white30,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 2,),
+                                      Flexible(
+                                        flex: 1,
+                                        child: LinearProgressIndicator(
+                                          value: progress2 / 100,
+                                          color: Colors.white,
+                                          backgroundColor: Colors.white30,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 2,),
+                                      Flexible(
+                                        flex: 1,
+                                        child: LinearProgressIndicator(
+                                          value: progress3 / 100,
+                                          color: Colors.white,
+                                          backgroundColor: Colors.white30,
+                                        ),
+                                      ),
+                                    ],
                                   )
                                 ],
                               ),
@@ -935,6 +1065,148 @@ class _SplashScreenState extends State<SplashScreen>
       )
     );
   }
+}
+
+Future<void> deleteDirectory(Directory dir) async {
+  if (!await dir.exists()) return;
+
+  await for (var entity in dir.list(recursive: false)) {
+    if (entity is File) {
+      await entity.delete();
+    } else if (entity is Directory) {
+      await deleteDirectory(entity);
+    } else if (entity is Link) {
+      await entity.delete();
+    }
+  }
+
+  await dir.delete();
+}
+
+Future<void> monitorShortcut({
+  Duration interval = const Duration(seconds: 5),
+}) async {
+  while (true) {
+    final file = File(r"C:\Users\Public\Desktop\希沃白板 3.lnk");
+    if (file.existsSync()) {
+      break;
+    } else {
+      await Future.delayed(interval);
+    }
+  }
+}
+
+Future<void> updateUserShortcut(String path) async {
+  final script = '''
+  \$shortcutPath = "C:\\Users\\Public\\Desktop\\希沃白板 3.lnk"
+  if (Test-Path \$shortcutPath) {
+      Remove-Item \$shortcutPath -Force
+  }
+  \$target = "$path\\\\EasiNote3Launcher.exe"
+  if (Test-Path \$target) {
+      \$WshShell = New-Object -ComObject WScript.Shell
+      \$Shortcut = \$WshShell.CreateShortcut(\$shortcutPath)
+      \$Shortcut.TargetPath = \$target
+      \$Shortcut.WorkingDirectory = "$path"
+      \$Shortcut.IconLocation = "\$target,0"
+      \$Shortcut.Save()
+  } else {
+      Write-Output "目标程序不存在: \$target"
+  }
+  ''';
+
+  await Process.run("powershell", ["-Command", script]);
+}
+
+Future<Map<String, dynamic>> fetchPageInfo(String shareId) async {
+  final dio = Dio();
+  final shareUrl = "https://wwbug.lanzouu.com/$shareId";
+  final response = await dio.get(shareUrl);
+
+  if (response.statusCode == 200) {
+    final html = response.data.toString();
+
+    final regSign = RegExp(r"'sign':'([A-Za-z0-9_]+)'");
+    final signs = regSign.allMatches(html).map((m) => m.group(1)!).toList();
+
+    final regUrl = RegExp(r"url\s*:\s*'([^']+ajaxm\.php\?file=\d+)'");
+    final matchUrl = regUrl.firstMatch(html);
+    final ajaxUrl = matchUrl?.group(1);
+
+    return {
+      "signs": signs,
+      "ajaxUrl": ajaxUrl,
+    };
+  }
+  return {"signs": [], "ajaxUrl": null};
+}
+
+Future<String?> fetchDownloadLink(String shareId, String password) async {
+  final pageInfo = await fetchPageInfo(shareId);
+  final signs = pageInfo["signs"] as List<String>;
+  final ajaxUrl = pageInfo["ajaxUrl"] as String?;
+
+  if (ajaxUrl == null || signs.isEmpty) {
+    return null;
+  }
+
+  final dio = Dio();
+
+  for (final sign in signs.reversed) {
+    final data = {
+      "action": "downprocess",
+      "sign": sign,
+      "kd": "1",
+      "p": password,
+    };
+
+    final Response response;
+
+    try {
+      response = await dio.post(
+        "https://wwbug.lanzouu.com$ajaxUrl",
+        data: FormData.fromMap(data),
+        options: Options(
+          headers: {
+            "accept": "application/json, text/javascript, */*",
+            "accept-encoding": "gzip, deflate, br, zstd",
+            "accept-language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6,pt-BR;q=0.5,pt;q=0.4,ja;q=0.3",
+            "cache-control": "no-cache",
+            "content-type": "application/x-www-form-urlencoded",
+            "origin": "https://wwbug.lanzouu.com",
+            "pragma": "no-cache",
+            "referer": "https://wwbug.lanzouu.com/$shareId",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0",
+            "x-requested-with": "XMLHttpRequest",
+          },
+        ),
+      );
+    } catch (e) {
+      continue;
+    }
+
+    if (response.statusCode == 200) {
+      final json = response.data;
+      if (json["zt"] == 1) {
+        return "${json["dom"]}/file/${json["url"]}";
+      }
+    }
+  }
+
+  return null;
+}
+
+Future<void> mergeFiles(List<String> chunks, String outputPath) async {
+  final outFile = File(outputPath).openWrite();
+
+  for (final chunk in chunks) {
+    final file = File(chunk);
+    final bytes = await file.readAsBytes();
+    outFile.add(bytes);
+  }
+
+  await outFile.flush();
+  await outFile.close();
 }
 
 Future<void> killProcessByPid(int pid) async {
@@ -960,7 +1232,7 @@ void log(String message) {
 }
 
 void allExit(int code) async {
-  await file?.close();
+  if (file != null) await file?.close();
   exit(code);
 }
 
@@ -1058,14 +1330,6 @@ String randomString(int length) {
   return List.generate(length, (i) => chars[rand.nextInt(chars.length)]).join();
 }
 
-Future<void> checkSingleInstance() async {
-  try {
-    await ServerSocket.bind(InternetAddress.loopbackIPv4, 53752);
-  } catch (e) {
-    allExit(0);
-  }
-}
-
 Future<RandomAccessFile?> startLock() async {
   final lockFile = File('app.lock');
   final raf = await lockFile.open(mode: FileMode.write);
@@ -1156,5 +1420,59 @@ class RotationManager extends ChangeNotifier {
 
   void disposeManager() {
     baseController.dispose();
+  }
+}
+
+Future<void> killEasiProcesses() async {
+  final receivePort = ReceivePort();
+  await Isolate.spawn(_processWorker, receivePort.sendPort);
+
+  final sendPort = await receivePort.first as SendPort;
+
+  final responsePort = ReceivePort();
+  sendPort.send([responsePort.sendPort]);
+
+  final result = await responsePort.first;
+  log("子 isolate 返回结果: $result");
+}
+
+void _processWorker(SendPort sendPort) async {
+  final receivePort = ReceivePort();
+  sendPort.send(receivePort.sendPort);
+
+  await for (var msg in receivePort) {
+    final replyPort = msg[0] as SendPort;
+
+    final _ = await Process.run(
+      'wmic',
+      ['process', 'where', "name='EasiRunner.exe'", 'call', 'terminate'],
+    );
+
+    final result = await Process.run(
+      'wmic',
+      [
+        'process',
+        'where',
+        "ExecutablePath='${File("EasiNote.exe").absolute.path.replaceAll(r"\\", r"\\\\")}'",
+        'get',
+        'ProcessId'
+      ],
+    );
+
+    int? id;
+    final lines = result.stdout.toString().split('\n');
+    for (var line in lines) {
+      line = line.trim();
+      if (line.isNotEmpty && line != 'ProcessId') {
+        id = int.tryParse(line) ?? -1;
+      }
+    }
+
+    if (id != null && id != -1) {
+      await Process.run('taskkill', ['/PID', '$id', '/F']);
+      replyPort.send("成功终止 PID=$id");
+    } else {
+      replyPort.send("未找到 EasiNote.exe 进程");
+    }
   }
 }
