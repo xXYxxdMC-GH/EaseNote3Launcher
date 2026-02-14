@@ -235,42 +235,25 @@ class _SplashScreenState extends State<SplashScreen>
         setState(() {});
         await Future.delayed(const Duration(milliseconds: 250));
 
-        final head = await Process.run(
-          'curl',
-          ['-I', '-L',
-        '-H',
-        'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-        'AppleWebKit/537.36 (KHTML, like Gecko) '
-        'Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0',
-        '-H',
-        'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            '-H',
-            'Accept-Encoding: gzip, deflate, br, zstd',
-            '-H',
-        'Accept-Language: zh-CN,zh;q=0.9,en;q=0.8',
-        '-H',
-            'Connection: keep-alive',
-            '-H',
-            'Host: ${Uri.parse(url).host}', url],
-          runInShell: true,
-        );
-        final contentLengthLine = (head.stdout as String)
-            .split('\n')
-            .firstWhere(
-                (line) => line.toLowerCase().startsWith('content-length'),
-            orElse: () => '');
-        final total = contentLengthLine.isNotEmpty
-            ? int.tryParse(contentLengthLine.split(':').last.trim()) ?? -1
-            : -1;
-
+        final total = switch(index) {
+          0 => 96468992,
+          1 => 96468992,
+          2 => 96468992,
+          3 => 95265000,
+          _ => -1
+        };
         log("文件总大小: $total 字节");
 
         final process = await Process.start(
           'curl',
           [
             '-L',
-            '-H',
-            'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+            '-b',
+            '',
+            '-c',
+            '/dev/null/',
+            '-A',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
                 'AppleWebKit/537.36 (KHTML, like Gecko) '
                 'Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0',
             '-H',
