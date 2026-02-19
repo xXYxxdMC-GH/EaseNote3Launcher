@@ -83,7 +83,7 @@ void main(List<String> args) async {
   log("初窗");
 
   WindowOptions options = WindowOptions(
-    size: Size(700, 310 + ((settingMode && !isTampered) || installMode ? 60 : 0)),
+    size: Size(700, 310 + ((settingMode && !isTampered) || installMode ? 70 : 0)),
     center: true,
     backgroundColor: Colors.transparent,
     skipTaskbar: true,
@@ -373,6 +373,7 @@ class _SplashScreenState extends State<SplashScreen>
     final flutterDll = File("$currentPath/flutter_windows.dll");
     final screenDll = File("$currentPath/screen_retriever_windows_plugin.dll");
     final windowManagerDll = File("$currentPath/window_manager_plugin.dll");
+    final urlLauncherDll = File("$currentPath/url_launcher_windows_plugin.dll");
     final dataDirectory = Directory("$currentPath/data");
     final targetDataDir = Directory("$path/data");
 
@@ -386,6 +387,7 @@ class _SplashScreenState extends State<SplashScreen>
     await flutterDll.copy("$path\\flutter_windows.dll");
     await screenDll.copy("$path\\screen_retriever_windows_plugin.dll");
     await windowManagerDll.copy("$path\\window_manager_plugin.dll");
+    await urlLauncherDll.copy("$path\\url_launcher_windows_plugin.dll");
     status = "正在注入数据...";
     setState(() {});
     await Future.delayed(const Duration(milliseconds: 250));
@@ -421,7 +423,7 @@ class _SplashScreenState extends State<SplashScreen>
         opacity: CurvedAnimation(parent: _controller, curve: const Interval(0.0, 0.2)),
         child: Container(
           width: 697,
-          height: 311 + ((settingMode && !isTampered) || installMode ? 60 : 0),
+          height: 311 + ((settingMode && !isTampered) || installMode ? 70 : 0),
           decoration: BoxDecoration(
             color: Colors.black,
             border: Border.all(color: Colors.white38, width: 1.5,),
@@ -760,7 +762,7 @@ class _SplashScreenState extends State<SplashScreen>
                             duration: const Duration(milliseconds: 300),
                             curve: Curves.easeInOut,
                             child: Text(
-                              pressed ? "点击重启" : "尝试结束后台进程",
+                              pressed ? "已尝试结束，点击关闭设置" : "尝试结束后台进程",
                               key: ValueKey<bool>(pressed),
                             ),
                           )
