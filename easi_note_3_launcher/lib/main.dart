@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
+import 'package:url_launcher/url_launcher_string.dart';
 import 'package:window_manager/window_manager.dart';
 
 final logFile = File('launcher_log.log');
@@ -795,6 +796,7 @@ class _SplashScreenState extends State<SplashScreen>
                             });
                             await Future.delayed(const Duration(milliseconds: 500));
                             final file = File(r"C:\ProgramData\EasiNote3\SWAF1501.swaf");
+                            await Process.run( 'reg', ['delete', r'HKLM\SOFTWARE\WOW6432Node\EasiNote3', '/f'], runInShell: true,);
                             if (!pressedFix && await file.exists()) await file.delete();
                             manager.triggerFastSpin(this, (v) {
                               setState(() {
@@ -811,13 +813,44 @@ class _SplashScreenState extends State<SplashScreen>
                             child: !pressedFix ? Text(
                               "尝试修复",
                               key: ValueKey<bool>(pressedFix),
-                            ) : Icon(Icons.check, key: ValueKey<bool>(pressedFix),),
+                            ) : Text("请定期启动此功能", key: ValueKey<bool>(pressedFix),),
                           ),
                         ),
                       ],
                     ),
+                    const SizedBox(height: 16,),
+                    Row(
+                      mainAxisSize: MainAxisSize.max,
+                      mainAxisAlignment: MainAxisAlignment.start,
+                      children: [
+                        Icon(Icons.info_outline, color: Colors.white, size: 48,),
+                        const SizedBox(width: 8,),
+                        Text("关于", style: TextStyle(color: Colors.white, fontSize: 24),),
+                        SizedBox(width: 16,),
+                        FilledButton(
+                          style: ButtonStyle(
+                            foregroundColor: WidgetStateProperty.all(Colors.white),
+                            backgroundColor: WidgetStateProperty.all(Colors.black),
+                            side: WidgetStateProperty.all(
+                              const BorderSide(color: Colors.white, width: 0.5),
+                            ),
+                            shape: WidgetStateProperty.all<RoundedRectangleBorder>(
+                              RoundedRectangleBorder(
+                                borderRadius: BorderRadius.all(Radius.circular(4)),
+                              ),
+                            ),
+                            padding: WidgetStateProperty.all<EdgeInsetsGeometry>(const EdgeInsets.only(left: 6, right: 6)),
+                          ),
+                          onPressed: () async {
+                            launchUrlString("https://github.com/xXYxxdMC-GH");
+                            },
+                          child: Text("前往作者Github主页"),
+                        ),
+                      ],
+                    ),
                   ],
-                ),),
+                ),
+                ),
               )
             ],
           ) : FutureBuilder<bool?>(

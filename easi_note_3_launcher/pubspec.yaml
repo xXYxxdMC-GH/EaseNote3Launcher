@@ -40,6 +40,7 @@ dependencies:
   shared_preferences: ^2.5.4
   dio: ^5.9.1
   file_picker: any
+  url_launcher: any
 
 dev_dependencies:
   flutter_test:
